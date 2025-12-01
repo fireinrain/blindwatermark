@@ -5,6 +5,7 @@ import (
 	"blindwatermark/converter"
 	"fmt"
 	"image"
+	_ "image/jpeg"
 	_ "image/png"
 	"os"
 )
@@ -54,12 +55,81 @@ func main() {
 	bw.SaveImgFile("dist/output_qr.jpg", resQrImg)
 
 	fmt.Println("正在提取二维码水印...")
-	outQrFile, _ := os.Open("dist/output_qr.jpg")
-	wmQrImg, _, _ := image.Decode(outQrFile)
-	qrResult, _ := bw.Extract(wmQrImg)
+	outQrFile, err := os.Open("dist/output_qr.jpg") // 检查文件是否打开成功
+	if err != nil {
+		fmt.Printf("❌ 打开文件失败: %v\n", err)
+		return
+	}
+	defer outQrFile.Close()
 
+	// ✅ 修复点：严查 Decode 错误
+	wmQrImg, _, err := image.Decode(outQrFile)
+	if err != nil {
+		fmt.Printf("❌ 图片解码失败 (可能文件损坏或格式未支持): %v\n", err)
+		return // 停止执行，防止 panic
+	}
+
+	qrResult, err := bw.Extract(wmQrImg)
+	if err != nil {
+		fmt.Printf("❌ 提取过程出错: %v\n", err)
+		return
+	}
+
+	// 只有 err 为 nil 时，qrResult 才有值
 	if qrResult.Type == converter.TypeQRCode {
 		fmt.Printf("提取到二维码，大小: %d bytes. 已保存为 extracted_qr.png\n", len(qrResult.ImageBytes))
 		os.WriteFile("dist/extracted_qr.png", qrResult.ImageBytes, 0644)
+	}
+
+	//嵌入图片
+	fmt.Println("正在嵌入图片水印...")
+	//读取水印图片
+	// 打开水印图片
+	wmImgFile, err := os.Open("dist/watermark.png")
+	if err != nil {
+		panic(err)
+	}
+	defer wmImgFile.Close()
+	wmImg, _, err := image.Decode(wmImgFile)
+	if err != nil {
+		panic(err)
+	}
+	resImg, err = bw.EmbedImage(srcImg, wmImg)
+	if err != nil {
+		panic(err)
+	}
+	bw.SaveImgFile("dist/output_img.jpg", resImg)
+
+	fmt.Println("\n--- 正在提取图片水印 ---")
+
+	// 1. 读取带水印的图片
+	encodedFile, _ := os.Open("dist/output_img.jpg")
+	encodedImg, _, err := image.Decode(encodedFile)
+	if err != nil {
+		panic(err)
+	}
+
+	// 2. 执行提取
+	result, err = bw.Extract(encodedImg)
+	if err != nil {
+		fmt.Printf("提取失败: %v\n", err)
+		return
+	}
+
+	// 3. 处理结果
+	if result.Type == converter.TypeImage {
+		fmt.Printf("✅ 识别成功！发现嵌入了图片水印。\n")
+		// 4. 保存文件
+		// result.ImageBytes 里已经是我们刚刚重建好的 PNG 数据了
+		outputName := "dist/extracted_secret.png"
+		err := os.WriteFile(outputName, result.ImageBytes, 0644)
+		if err != nil {
+			panic(err)
+		}
+
+		fmt.Printf("🎉 提取出的图片已保存为: %s\n", outputName)
+		fmt.Println("请打开该文件查看，它应该是一个 32x32 的黑白像素图。")
+	} else {
+		fmt.Println("未检测到图片水印，检测到的类型是:", result.Type)
 	}
 }
